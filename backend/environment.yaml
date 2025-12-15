@@ -1,0 +1,17 @@
+name: traffic-backend
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+    - fastapi>=0.100.0
+    - uvicorn[standard]
+    - sqlalchemy
+    - python-multipart
+    - python-dotenv
+    - requests
+    - aiofiles
+    - psycopg2-binary
+    - pillow

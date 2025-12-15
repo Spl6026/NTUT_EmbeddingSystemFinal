@@ -1,0 +1,19 @@
+@import './base.css';
+@import "tailwindcss";
+
+body {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+.flex-center {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+#app {
+    min-height: 100vh;
+}
+

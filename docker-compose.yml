@@ -1,0 +1,80 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: traffic-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - ./backend/static:/app/static
+    environment:
+      - AI_SERVICE_URL=http://ai-service:5000
+      - DATABASE_URL=postgresql://traffic_user:1234@db:5432/traffic_db
+      - TZ=Asia/Taipei
+    depends_on:
+      - ai-service
+      - db
+    networks:
+      - traffic-net
+
+  ai-service:
+    build:
+      context: ./ai_service
+      dockerfile: Dockerfile
+    container_name: traffic-ai
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./ai_service:/app
+    networks:
+      - traffic-net
+
+  frontend:
+    build: ./frontend
+    container_name: traffic-frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - traffic-net
+
+  db:
+    image: postgres:15-alpine
+    container_name: traffic-db
+    restart: always
+    environment:
+      POSTGRES_USER: traffic_user
+      POSTGRES_PASSWORD: 1234
+      POSTGRES_DB: traffic_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - traffic-net
+      
+  cloudbeaver:
+    image: dbeaver/cloudbeaver:latest
+    container_name: traffic-dbeaver
+    ports:
+      - "8080:8978"
+    volumes:
+      - cloudbeaver_data:/opt/cloudbeaver/workspace
+    depends_on:
+      - db
+    networks:
+      - traffic-net
+
+networks:
+  traffic-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  cloudbeaver_data:
