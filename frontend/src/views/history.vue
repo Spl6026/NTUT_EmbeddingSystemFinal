@@ -1,13 +1,13 @@
 <script setup>
 import {ref, onMounted} from 'vue';
-import axios from 'axios';
+import apiClient, {getImageUrl} from '@/api.js';
 
 const historyLogs = ref([]);
 const loading = ref(true);
 
 const fetchHistory = async () => {
   try {
-    const res = await axios.get('http://localhost:8000/api/history');
+    const res = await apiClient.get('/api/history');
     historyLogs.value = res.data;
   } catch (error) {
     console.error("Failed to fetch history:", error);
@@ -57,7 +57,7 @@ onMounted(() => {
       >
         <div class="relative h-48 bg-gray-100 border-b border-gray-100 group">
           <img
-              :src="log.image_url"
+              :src="getImageUrl(log.image_url)"
               alt="Evidence"
               class="w-full h-full object-cover"
               loading="lazy"
@@ -66,7 +66,7 @@ onMounted(() => {
               class="absolute top-3 left-3 bg-red-600/90 text-white text-xs font-bold px-3 py-1 rounded-full shadow-md backdrop-blur-sm">
             VIOLATION
           </div>
-          <a :href="log.image_url" target="_blank"
+          <a :href="getImageUrl(log.image_url)" target="_blank"
              class="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white font-bold cursor-zoom-in">
             點擊查看大圖
           </a>

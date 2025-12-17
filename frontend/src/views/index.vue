@@ -1,6 +1,6 @@
 <script setup>
 import {ref, onMounted, onUnmounted, computed} from 'vue';
-import axios from 'axios';
+import apiClient, {getImageUrl} from '@/api.js';
 
 const data = ref(null);
 const loading = ref(true);
@@ -15,7 +15,7 @@ const statusClass = computed(() => {
 
 const fetchData = async () => {
   try {
-    const res = await axios.get('http://localhost:8000/api/dashboard/latest');
+    const res = await apiClient.get('/api/dashboard/latest');
     if (!res.data.error) {
       data.value = res.data;
     }
@@ -109,7 +109,8 @@ onUnmounted(() => clearInterval(timer));
 
         <div
             class="relative bg-gray-100 rounded-xl overflow-hidden min-h-[300px] flex items-center justify-center border border-gray-200">
-          <img :src="data.image_url" alt="Live View" class="w-full max-h-[600px] object-contain block"/>
+          <img :src="getImageUrl(data.image_url)" alt="Live View"
+               class="w-full max-h-[600px] object-contain block"/>
 
           <div v-if="data.is_violation"
                class="absolute inset-0 border-4 border-red-500/50 animate-pulse pointer-events-none rounded-xl"></div>

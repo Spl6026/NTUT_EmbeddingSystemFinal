@@ -180,7 +180,7 @@ async def detect_parking(file: UploadFile = File(...), db: Session = Depends(get
         "is_violation": is_violation,
         "car_detected": (car_count > 0),
         "status": status_msg,
-        "image_url": f"http://localhost:8000/static/{LIVE_IMG_FILENAME}?t={datetime.now().timestamp()}"
+        "image_url": f"/static/{LIVE_IMG_FILENAME}?t={datetime.now().timestamp()}"
     }
 
     return {
@@ -189,6 +189,24 @@ async def detect_parking(file: UploadFile = File(...), db: Session = Depends(get
         "message": status_msg,
         "image_url": latest_cache["image_url"]
     }
+
+
+@app.get("/api/history")
+def get_history(db: Session = Depends(get_db)):
+    logs = db.query(ParkingViolationLog) \
+        .filter(ParkingViolationLog.is_violation == True) \
+        .order_by(ParkingViolationLog.id.desc()) \
+        .all()
+
+    results = []
+    for log in logs:
+        results.append({
+            "id": log.id,
+            "timestamp": log.timestamp,
+            "status": log.status,
+            "image_url": f"/{log.image_path}"
+        })
+    return results
 
 
 @app.get("/api/dashboard/latest")
@@ -206,23 +224,5 @@ def get_latest_data(db: Session = Depends(get_db)):
         "is_violation": latest.is_violation,
         "car_detected": latest.car_detected,
         "status": f"[History] {latest.status}",
-        "image_url": f"http://localhost:8000/{latest.image_path}"
+        "image_url": f"/{latest.image_path}"
     }
-
-
-@app.get("/api/history")
-def get_history(db: Session = Depends(get_db)):
-    logs = db.query(ParkingViolationLog) \
-        .filter(ParkingViolationLog.is_violation == True) \
-        .order_by(ParkingViolationLog.id.desc()) \
-        .all()
-
-    results = []
-    for log in logs:
-        results.append({
-            "id": log.id,
-            "timestamp": log.timestamp,
-            "status": log.status,
-            "image_url": f"http://localhost:8000/{log.image_path}"
-        })
-    return results

@@ -2,6 +2,7 @@ from sqlalchemy import Column, Integer, String, DateTime, Boolean
 from sqlalchemy.sql import func
 from database import Base
 
+
 class ParkingViolationLog(Base):
     __tablename__ = "parking_violation_logs"
 

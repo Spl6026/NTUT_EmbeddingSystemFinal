@@ -1,6 +1,6 @@
 <script setup>
 import {ref, computed} from 'vue';
-import axios from 'axios';
+import apiClient from '@/api.js';
 
 const selectedFile = ref(null);
 const uploadStatus = ref("");
@@ -34,7 +34,7 @@ const uploadImage = async () => {
   formData.append("file", selectedFile.value);
 
   try {
-    const res = await axios.post('http://localhost:8000/api/detect_parking', formData, {
+    const res = await apiClient.post('/api/detect_parking', formData, {
       headers: {'Content-Type': 'multipart/form-data'}
     });
 

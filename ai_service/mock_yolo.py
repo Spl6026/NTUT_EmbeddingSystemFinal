@@ -41,6 +41,7 @@ async def predict_vehicle(file: UploadFile = File(...)):
         "boxes": boxes
     }
 
+
 # 模擬模型 B
 @app.post("/predict/redline")
 async def predict_redline(file: UploadFile = File(...)):
@@ -59,6 +60,7 @@ async def predict_redline(file: UploadFile = File(...)):
         "red_line_detected": has_red_line,
         "red_line_box": red_line_box
     }
+
 
 if __name__ == "__main__":
     print("AI Service Started on port 5000...")

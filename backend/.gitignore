@@ -1,0 +1,4 @@
+static/uploads/*
+static/uploads/.gitkeep
+static/live.jpg
+traffic.db
