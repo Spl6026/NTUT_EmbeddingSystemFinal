@@ -3,13 +3,16 @@ import shutil
 import requests
 import logging
 from models import ParkingViolationLog
+from starlette.requests import ClientDisconnect
 from datetime import datetime
-from fastapi import FastAPI, UploadFile, File, Depends
+from fastapi import FastAPI, UploadFile, File, Depends, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from database import engine, SessionLocal, Base
 from PIL import Image
+import binascii
+import numpy as np
 
 Base.metadata.create_all(bind=engine)
 app = FastAPI()
@@ -226,3 +229,68 @@ def get_latest_data(db: Session = Depends(get_db)):
         "status": f"[History] {latest.status}",
         "image_url": f"/{latest.image_path}"
     }
+
+active_transmissions = {}
+
+def decode_rgb565(raw_bytes, w, h):
+# 將 bytes 轉為 uint16 數組 (Big-endian)
+    data = np.frombuffer(raw_bytes, dtype='>u2') 
+    
+    # 提取顏色分量
+    r = ((data & 0x1F) << 3).astype(np.uint8)          # Low 5 bits
+    g = (((data >> 5) & 0x3F) << 2).astype(np.uint8)   # Mid 6 bits
+    b = (((data >> 11) & 0x1F) << 3).astype(np.uint8)  # High 5 bits
+    
+    # 合併成 RGB 並轉為圖片
+    rgb = np.stack((r, g, b), axis=-1).reshape((h, w, 3))
+    return Image.fromarray(rgb)
+active_transmissions = {}
+
+@app.post("/api/upload")
+async def upload_chunk(
+    request: Request,
+    offset: int = Query(...),
+    total: int = Query(...),
+    width: int = Query(320),
+    height: int = Query(240)
+):
+    client_ip = request.client.host
+    
+    try:
+        # 1. 安全讀取數據
+        chunk_data = await request.body()
+    except ClientDisconnect:
+        logger.warning(f"Client {client_ip} disconnected prematurelly.")
+        return {"status": "error", "message": "Disconnected"}
+
+    # 2. 初始化或取得緩衝區
+    if client_ip not in active_transmissions or offset == 0:
+        active_transmissions[client_ip] = bytearray(total)
+        logger.info(f"New upload from {client_ip}, total size: {total}")
+
+    # 3. 寫入片段
+    buffer = active_transmissions[client_ip]
+    end_index = offset + len(chunk_data)
+    
+    # 防止 offset 溢出導致 Crash
+    if end_index > total:
+        return {"status": "error", "message": "Data overflow"}
+        
+    buffer[offset:end_index] = chunk_data
+    
+    # 4. 檢查是否完成
+    if end_index >= total:
+        logger.info(f"✅ Image complete ({width}x{height}) from {client_ip}")
+        try:
+            # 使用剛才建議的解碼函式
+            img = decode_rgb565(buffer, width, height) 
+            img.save(LIVE_IMG_PATH)
+            
+            # 清理記憶體
+            del active_transmissions[client_ip]
+            return {"status": "complete", "message": "Saved successfully"}
+        except Exception as e:
+            logger.error(f"Decode failed: {e}")
+            return {"status": "error", "message": str(e)}
+
+    return {"status": "chunk_received", "progress": f"{int(end_index/total*100)}%"}
