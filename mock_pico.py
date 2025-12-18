@@ -1,39 +1,81 @@
 import requests
+import os
+import math
 import time
 import random
 
-url = 'http://127.0.0.1:8000/api/detect_parking'
+URL = 'http://127.0.0.1:8000/api/upload'
 
+WIDTH = 320
+HEIGHT = 240
+BYTES_PER_PIXEL = 2
+TOTAL_SIZE = WIDTH * HEIGHT * BYTES_PER_PIXEL
+
+CHUNK_SIZE = 4096 
 
 def create_dummy_image():
-    with open("test_image.jpg", "wb") as f:
-        f.write(b'\xFF\xD8\xFF\xE0\x00\x10JFIF')
-    return "test_image.jpg"
-
+    print(f"產生虛擬影像: {WIDTH}x{HEIGHT} (RGB565), 大小: {TOTAL_SIZE} bytes")
+    return os.urandom(TOTAL_SIZE)
 
 def run_simulation():
-    print("開始模擬 Pico 上傳...")
+    raw_data = create_dummy_image()
+    
+    offset = 0
+    total_chunks = math.ceil(TOTAL_SIZE / CHUNK_SIZE)
+    chunk_idx = 0
 
-    img_path = create_dummy_image()
+    print(f"開始模擬上傳 (共 {total_chunks} 個分片)...")
+    start_time = time.time()
 
-    try:
-        with open(img_path, 'rb') as f:
-            files = {'file': f}
-            print(f"正在上傳 {img_path} 到 {url} ...")
-            response = requests.post(url, files=files)
+    while offset < TOTAL_SIZE:
+        chunk = raw_data[offset : offset + CHUNK_SIZE]
 
-        if response.status_code == 200:
-            data = response.json()
-            print("上傳成功！伺服器回應：")
-            print(f"   - 資料: {data}")
-        else:
-            print(f"伺服器錯誤: {response.status_code}")
-            print(response.text)
+        params = {
+            "offset": offset,
+            "total": TOTAL_SIZE,
+            "width": WIDTH,
+            "height": HEIGHT
+        }
 
-    except Exception as e:
-        print(f"連線失敗: {e}")
-        print("請檢查 Uvicorn 是否有啟動？")
+        try:
+            response = requests.post(URL, params=params, data=chunk)
 
+            if response.status_code == 200:
+                resp_json = response.json()
+                chunk_idx += 1
+                
+                progress = int((offset / TOTAL_SIZE) * 20)
+                bar = "#" * progress + "-" * (20 - progress)
+                print(f"\r[{bar}] Chunk {chunk_idx}/{total_chunks} | {resp_json.get('status')}", end="")
+
+                if resp_json.get("status") == "complete":
+                    print("上傳完成！")
+                    print(f"Server 回應: {resp_json['message']}")
+                    break
+            else:
+                print(f"Error: {response.status_code} - {response.text}")
+                break
+
+        except Exception as e:
+            print(f"連線失敗: {e}")
+            break
+
+        offset += len(chunk)
+        
+        time.sleep(0.01)
+
+    duration = time.time() - start_time
+    print(f"總耗時: {duration:.2f} 秒")
 
 if __name__ == "__main__":
-    run_simulation()
+    try:
+        while True:
+            run_simulation()
+            print("等待下一輪...", end="")
+            for i in range(30, 0, -1):
+                print(f"\r下次上傳還有: {i} 秒  ", end="")
+                time.sleep(1)
+            print("\r" + " " * 30 + "\r", end="")
+            
+    except KeyboardInterrupt:
+        print("程式已手動停止")
