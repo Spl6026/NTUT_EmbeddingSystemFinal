@@ -34,7 +34,7 @@ const uploadImage = async () => {
   formData.append("file", selectedFile.value);
 
   try {
-    const res = await apiClient.post('/api/detect_parking', formData, {
+    const res = await apiClient.post('/api/upload_form', formData, {
       headers: {'Content-Type': 'multipart/form-data'}
     });
 
