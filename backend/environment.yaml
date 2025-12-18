@@ -15,3 +15,4 @@ dependencies:
     - aiofiles
     - psycopg2-binary
     - pillow
+    - numpy
