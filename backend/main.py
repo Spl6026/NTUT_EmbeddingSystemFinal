@@ -5,13 +5,12 @@ import logging
 from models import ParkingViolationLog
 from starlette.requests import ClientDisconnect
 from datetime import datetime
-from fastapi import FastAPI, UploadFile, File, Depends, Request, Query
+from fastapi import FastAPI, UploadFile, File, Depends, Request, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from database import engine, SessionLocal, Base
 from PIL import Image
-import binascii
 import numpy as np
 
 Base.metadata.create_all(bind=engine)
@@ -89,20 +88,22 @@ def check_intersection(boxA, boxB):
     return interWidth > 0 and interHeight > 0
 
 
-@app.post("/api/detect_parking")
-async def detect_parking(file: UploadFile = File(...), db: Session = Depends(get_db)):
+def decode_rgb565(raw_bytes, w, h):
+    # 將 bytes 轉為 uint16 數組 (Big-endian)
+    data = np.frombuffer(raw_bytes, dtype='>u2')
+
+    # 提取顏色分量
+    r = ((data & 0x1F) << 3).astype(np.uint8)  # Low 5 bits
+    g = (((data >> 5) & 0x3F) << 2).astype(np.uint8)  # Mid 6 bits
+    b = (((data >> 11) & 0x1F) << 3).astype(np.uint8)  # High 5 bits
+
+    # 合併成 RGB 並轉為圖片
+    rgb = np.stack((r, g, b), axis=-1).reshape((h, w, 3))
+    return Image.fromarray(rgb)
+
+
+def detect_parking(img_w, img_h):
     global latest_cache
-
-    with open(LIVE_IMG_PATH, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    img_w, img_h = 640, 480
-    try:
-        with Image.open(LIVE_IMG_PATH) as img:
-            img_w, img_h = img.size
-    except Exception as e:
-        print(f"Warning: Cannot read image size, using default 640x480. Error: {e}")
-
     logger.info(f"Image size: {img_w}x{img_h}")
     car_count = 0
     car_boxes = []
@@ -161,20 +162,20 @@ async def detect_parking(file: UploadFile = File(...), db: Session = Depends(get
     if is_violation:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         evidence_path = f"static/uploads/{timestamp}_evidence.jpg"
-
         shutil.copy(LIVE_IMG_PATH, evidence_path)
 
-        new_log = ParkingViolationLog(
-            image_path=evidence_path,
-            is_violation=True,
-            car_detected=True,
-            status=status_msg
-        )
-        db.add(new_log)
-        db.commit()
-        db.refresh(new_log)
-        log_id = new_log.id
-        print(f"違規存檔: {evidence_path}")
+        with SessionLocal() as db:
+            new_log = ParkingViolationLog(
+                image_path=evidence_path,
+                is_violation=True,
+                car_detected=True,
+                status=status_msg
+            )
+            db.add(new_log)
+            db.commit()
+            db.refresh(new_log)
+            log_id = new_log.id
+            print(f"違規存檔: {evidence_path}")
 
     timestamp_now = datetime.now().isoformat()
     latest_cache = {
@@ -185,6 +186,22 @@ async def detect_parking(file: UploadFile = File(...), db: Session = Depends(get
         "status": status_msg,
         "image_url": f"/static/{LIVE_IMG_FILENAME}?t={datetime.now().timestamp()}"
     }
+    return is_violation, status_msg
+
+
+@app.post("/api/upload_form")
+async def upload_form(file: UploadFile = File(...)):
+    with open(LIVE_IMG_PATH, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    img_w, img_h = 640, 480
+    try:
+        with Image.open(LIVE_IMG_PATH) as img:
+            img_w, img_h = img.size
+    except Exception as e:
+        print(f"Warning: Cannot read image size, using default 640x480. Error: {e}")
+
+    is_violation, status_msg = detect_parking(img_w, img_h)
 
     return {
         "status": "processed",
@@ -192,6 +209,63 @@ async def detect_parking(file: UploadFile = File(...), db: Session = Depends(get
         "message": status_msg,
         "image_url": latest_cache["image_url"]
     }
+
+
+active_transmissions = {}
+
+
+@app.post("/api/upload")
+async def upload_chunk(
+        request: Request,
+        background_tasks: BackgroundTasks,
+        offset: int = Query(...),
+        total: int = Query(...),
+        width: int = Query(320),
+        height: int = Query(240)
+):
+    client_ip = request.client.host
+
+    try:
+        # 1. 安全讀取數據
+        chunk_data = await request.body()
+    except ClientDisconnect:
+        logger.warning(f"Client {client_ip} disconnected prematurelly.")
+        return {"status": "error", "message": "Disconnected"}
+
+    # 2. 初始化或取得緩衝區
+    if client_ip not in active_transmissions or offset == 0:
+        active_transmissions[client_ip] = bytearray(total)
+        logger.info(f"New upload from {client_ip}, total size: {total}")
+
+    # 3. 寫入片段
+    buffer = active_transmissions[client_ip]
+    end_index = offset + len(chunk_data)
+
+    # 防止 offset 溢出導致 Crash
+    if end_index > total:
+        return {"status": "error", "message": "Data overflow"}
+
+    buffer[offset:end_index] = chunk_data
+
+    # 4. 檢查是否完成
+    if end_index >= total:
+        logger.info(f"Image complete ({width}x{height}) from {client_ip}")
+        try:
+            # 使用解碼函式
+            img = decode_rgb565(buffer, width, height)
+            img.save(LIVE_IMG_PATH)
+
+            # 清理記憶體
+            del active_transmissions[client_ip]
+            background_tasks.add_task(detect_parking, width, height)
+            return {"status": "complete", "message": "Saved successfully"}
+        except Exception as e:
+            logger.error(f"Decode failed: {e}")
+            if client_ip in active_transmissions:
+                del active_transmissions[client_ip]
+            return {"status": "error", "message": str(e)}
+
+    return {"status": "chunk_received", "progress": f"{int(end_index / total * 100)}%"}
 
 
 @app.get("/api/history")
@@ -229,68 +303,3 @@ def get_latest_data(db: Session = Depends(get_db)):
         "status": f"[History] {latest.status}",
         "image_url": f"/{latest.image_path}"
     }
-
-active_transmissions = {}
-
-def decode_rgb565(raw_bytes, w, h):
-# 將 bytes 轉為 uint16 數組 (Big-endian)
-    data = np.frombuffer(raw_bytes, dtype='>u2') 
-    
-    # 提取顏色分量
-    r = ((data & 0x1F) << 3).astype(np.uint8)          # Low 5 bits
-    g = (((data >> 5) & 0x3F) << 2).astype(np.uint8)   # Mid 6 bits
-    b = (((data >> 11) & 0x1F) << 3).astype(np.uint8)  # High 5 bits
-    
-    # 合併成 RGB 並轉為圖片
-    rgb = np.stack((r, g, b), axis=-1).reshape((h, w, 3))
-    return Image.fromarray(rgb)
-active_transmissions = {}
-
-@app.post("/api/upload")
-async def upload_chunk(
-    request: Request,
-    offset: int = Query(...),
-    total: int = Query(...),
-    width: int = Query(320),
-    height: int = Query(240)
-):
-    client_ip = request.client.host
-    
-    try:
-        # 1. 安全讀取數據
-        chunk_data = await request.body()
-    except ClientDisconnect:
-        logger.warning(f"Client {client_ip} disconnected prematurelly.")
-        return {"status": "error", "message": "Disconnected"}
-
-    # 2. 初始化或取得緩衝區
-    if client_ip not in active_transmissions or offset == 0:
-        active_transmissions[client_ip] = bytearray(total)
-        logger.info(f"New upload from {client_ip}, total size: {total}")
-
-    # 3. 寫入片段
-    buffer = active_transmissions[client_ip]
-    end_index = offset + len(chunk_data)
-    
-    # 防止 offset 溢出導致 Crash
-    if end_index > total:
-        return {"status": "error", "message": "Data overflow"}
-        
-    buffer[offset:end_index] = chunk_data
-    
-    # 4. 檢查是否完成
-    if end_index >= total:
-        logger.info(f"✅ Image complete ({width}x{height}) from {client_ip}")
-        try:
-            # 使用剛才建議的解碼函式
-            img = decode_rgb565(buffer, width, height) 
-            img.save(LIVE_IMG_PATH)
-            
-            # 清理記憶體
-            del active_transmissions[client_ip]
-            return {"status": "complete", "message": "Saved successfully"}
-        except Exception as e:
-            logger.error(f"Decode failed: {e}")
-            return {"status": "error", "message": str(e)}
-
-    return {"status": "chunk_received", "progress": f"{int(end_index/total*100)}%"}
