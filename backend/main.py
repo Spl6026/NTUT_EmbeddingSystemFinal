@@ -12,6 +12,9 @@ from sqlalchemy.orm import Session
 from database import engine, SessionLocal, Base
 from PIL import Image
 import numpy as np
+from ssh_tunnel import start_ssh_tunnel
+
+ssh_proc = start_ssh_tunnel()
 
 Base.metadata.create_all(bind=engine)
 app = FastAPI()
