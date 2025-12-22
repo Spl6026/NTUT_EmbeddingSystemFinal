@@ -11,6 +11,7 @@ services:
     volumes:
       - ./backend:/app
       - ./backend/static:/app/static
+      - C:/Users/UnitaryMatrix/.ssh:/root/.ssh:ro
     environment:
       - AI_SERVICE_URL=http://ai-service:5000
       - DATABASE_URL=postgresql://traffic_user:1234@db:5432/traffic_db
