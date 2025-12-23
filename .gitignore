@@ -208,3 +208,5 @@ __marimo__/
 
 # Model weight
 *.pt
+# Project SSH Keys
+/ssh_config/id_*
