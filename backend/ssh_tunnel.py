@@ -10,10 +10,13 @@ def start_ssh_tunnel():
     ]
 
     proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
+        cmd
     )
 
     time.sleep(2)  # 等 tunnel 建立
+    if proc.poll() is not None:
+        print(f"SSH Tunnel failed to start with return code {proc.returncode}")
+    else:
+        print(f"SSH Tunnel started with PID {proc.pid}")
+        
     return proc
