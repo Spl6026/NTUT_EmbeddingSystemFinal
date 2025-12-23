@@ -214,6 +214,17 @@ async def upload_form(file: UploadFile = File(...)):
     }
 
 
+@app.get("/api/system/status")
+def get_system_status():
+    tunnel_active = ssh_proc.poll() is None
+    return {
+        "status": "online",
+        "tunnel_active": tunnel_active,
+        "tunnel_pid": ssh_proc.pid if tunnel_active else None,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
 active_transmissions = {}
 
 

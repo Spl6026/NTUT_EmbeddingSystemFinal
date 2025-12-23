@@ -1,10 +1,14 @@
 FROM continuumio/miniconda3
 WORKDIR /app
-RUN apt-get update && apt-get install -y gcc libpq-dev && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y gcc libpq-dev openssh-client procps curl && rm -rf /var/lib/apt/lists/*
 
 COPY environment.yaml .
 
 RUN conda env create -f environment.yaml
+
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
 
 COPY . .
 
