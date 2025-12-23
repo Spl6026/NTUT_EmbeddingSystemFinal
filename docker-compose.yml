@@ -11,28 +11,27 @@ services:
     volumes:
       - ./backend:/app
       - ./backend/static:/app/static
-      - C:/Users/UnitaryMatrix/.ssh:/root/.ssh:ro
+      - C:/Users/UnitaryMatrix/.ssh:/ssh-host:ro
     environment:
       - AI_SERVICE_URL=http://ai-service:5000
       - DATABASE_URL=postgresql://traffic_user:1234@db:5432/traffic_db
       - TZ=Asia/Taipei
     depends_on:
-      - ai-service
       - db
     networks:
       - traffic-net
 
-  ai-service:
-    build:
-      context: ./ai_service
-      dockerfile: Dockerfile
-    container_name: traffic-ai
-    ports:
-      - "5000:5000"
-    volumes:
-      - ./ai_service:/app
-    networks:
-      - traffic-net
+  # ai-service:
+  #   build:
+  #     context: ./ai_service
+  #     dockerfile: Dockerfile
+  #   container_name: traffic-ai
+  #   ports:
+  #     - "5000:5000"
+  #   volumes:
+  #     - ./ai_service:/app
+  #   networks:
+  #     - traffic-net
 
   frontend:
     build: ./frontend
@@ -61,7 +60,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - traffic-net
-      
+
   cloudbeaver:
     image: dbeaver/cloudbeaver:latest
     container_name: traffic-dbeaver
