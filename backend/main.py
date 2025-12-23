@@ -258,7 +258,7 @@ async def upload_chunk(
             # 清理記憶體
             del active_transmissions[client_ip]
             background_tasks.add_task(detect_parking, width, height)
-            return {"status": "complete", "message": "Saved successfully"}
+            return {"status": "complete", "message": "Saved successfully", "command": "ring", "value": "true"}
         except Exception as e:
             logger.error(f"Decode failed: {e}")
             if client_ip in active_transmissions:
