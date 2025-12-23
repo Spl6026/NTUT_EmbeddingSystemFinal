@@ -11,7 +11,7 @@ services:
     volumes:
       - ./backend:/app
       - ./backend/static:/app/static
-      - C:/Users/UnitaryMatrix/.ssh:/ssh-host:ro
+      - ./ssh_config:/ssh-host:ro
     environment:
       - AI_SERVICE_URL=http://ai-service:5000
       - DATABASE_URL=postgresql://traffic_user:1234@db:5432/traffic_db
@@ -20,18 +20,6 @@ services:
       - db
     networks:
       - traffic-net
-
-  # ai-service:
-  #   build:
-  #     context: ./ai_service
-  #     dockerfile: Dockerfile
-  #   container_name: traffic-ai
-  #   ports:
-  #     - "5000:5000"
-  #   volumes:
-  #     - ./ai_service:/app
-  #   networks:
-  #     - traffic-net
 
   frontend:
     build: ./frontend
