@@ -12,6 +12,9 @@ from sqlalchemy.orm import Session
 from database import engine, SessionLocal, Base
 from PIL import Image
 import numpy as np
+from ssh_tunnel import start_ssh_tunnel
+
+ssh_proc = start_ssh_tunnel()
 
 Base.metadata.create_all(bind=engine)
 app = FastAPI()
@@ -208,6 +211,17 @@ async def upload_form(file: UploadFile = File(...)):
         "violation_detected": is_violation,
         "message": status_msg,
         "image_url": latest_cache["image_url"]
+    }
+
+
+@app.get("/api/system/status")
+def get_system_status():
+    tunnel_active = ssh_proc.poll() is None
+    return {
+        "status": "online",
+        "tunnel_active": tunnel_active,
+        "tunnel_pid": ssh_proc.pid if tunnel_active else None,
+        "timestamp": datetime.now().isoformat()
     }
 
 
