@@ -1,5 +1,5 @@
-import os
 import shutil
+from contextlib import asynccontextmanager
 import requests
 import logging
 from models import ParkingViolationLog
@@ -10,40 +10,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from database import engine, SessionLocal, Base
-from PIL import Image
+from PIL import Image, ImageDraw
 import numpy as np
 from ssh_tunnel import start_ssh_tunnel
-
-ssh_proc = start_ssh_tunnel()
-
-Base.metadata.create_all(bind=engine)
-app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-os.makedirs("static/uploads", exist_ok=True)
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
-AI_HOST = os.getenv("AI_SERVICE_URL", "http://localhost:5000")
-VEHICLE_API_URL = f"{AI_HOST}/predict/vehicle"
-REDLINE_API_URL = f"{AI_HOST}/predict/redline"
-
-LIVE_IMG_FILENAME = "live.jpg"
-LIVE_IMG_PATH = f"static/{LIVE_IMG_FILENAME}"
-
-latest_cache = {
-    "id": 0,
-    "timestamp": None,
-    "is_violation": False,
-    "car_detected": False,
-    "status": "System Ready",
-    "image_url": None
-}
+import config
+import state
 
 logging.basicConfig(
     level=logging.INFO,
@@ -52,6 +23,44 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+Base.metadata.create_all(bind=engine)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("System Starting...")
+
+    state.ssh_proc = start_ssh_tunnel()
+
+    if state.ssh_proc:
+        logger.info(f"SSH Tunnel active (PID: {state.ssh_proc.pid})")
+    else:
+        logger.error("SSH Tunnel failed!")
+
+    yield
+
+    logger.info("System Shutting down...")
+    if state.ssh_proc:
+        state.ssh_proc.terminate()
+        try:
+            state.ssh_proc.wait(timeout=3)
+        except:
+            state.ssh_proc.kill()
+        logger.info("SSH Tunnel closed.")
+
+
+app = FastAPI(lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 def get_db():
@@ -91,6 +100,34 @@ def check_intersection(boxA, boxB):
     return interWidth > 0 and interHeight > 0
 
 
+def draw_violation_boxes(input_path, output_path, car_boxes, red_line_boxes):
+    try:
+        with Image.open(input_path) as img:
+            img = img.convert("RGB")
+            draw = ImageDraw.Draw(img)
+
+            for r_box in red_line_boxes:
+                if r_box and len(r_box) == 4:
+                    box = [int(c) for c in r_box]
+                    draw.rectangle(box, outline="red", width=5)
+
+            for car in car_boxes:
+                if len(car) == 4:
+                    box = [int(c) for c in car]
+                    draw.rectangle(box, outline="blue", width=3)
+
+            img.save(output_path, quality=95)
+            logger.info(f"Evidence saved: {output_path}")
+            return True
+    except Exception as e:
+        logger.error(f"Failed to draw boxes: {e}")
+        try:
+            shutil.copy(input_path, output_path)
+        except:
+            pass
+        return False
+
+
 def decode_rgb565(raw_bytes, w, h):
     # 將 bytes 轉為 uint16 數組 (Big-endian)
     data = np.frombuffer(raw_bytes, dtype='>u2')
@@ -106,41 +143,69 @@ def decode_rgb565(raw_bytes, w, h):
 
 
 def detect_parking(img_w, img_h):
-    global latest_cache
     logger.info(f"Image size: {img_w}x{img_h}")
     car_count = 0
     car_boxes = []
     red_line_detected = False
-    red_line_box = []
+    red_line_boxes = []
     is_violation = False
     status_msg = "Analyzing..."
+    try:
+        with open(config.LIVE_IMG_PATH, 'rb') as f:
+            img_bytes = f.read()
+    except FileNotFoundError:
+        return False, "Error: Image not found"
 
     try:
         # 呼叫車輛模型
-        with open(LIVE_IMG_PATH, 'rb') as f_veh:
-            resp_veh = requests.post(VEHICLE_API_URL, files={'file': f_veh}, timeout=5)
-            if resp_veh.status_code == 200:
-                v_data = resp_veh.json()
-                car_count = v_data.get("car_count", 0)
-                car_boxes = v_data.get("boxes", [])  # list of { "box": [x,y,w,h] }
+        resp_veh = requests.post(config.VEHICLE_API_URL,
+                                 files={'image': ('live.jpg', img_bytes, 'image/jpeg')},
+                                 data={'model': 'yolov13n'}, timeout=20)
+        if resp_veh.status_code == 200:
+            v_data = resp_veh.json()
+            # logging.info(f"Vehicle detected: {v_data}")
+            detections = v_data.get("detections", [])
+            for det in detections:
+                if det.get("class_name") == "car":
+                    car_boxes.append(det["bbox"])
+
+            car_count = len(car_boxes)
+            logging.info(f"Cars detected: {car_count}")
 
         # 呼叫紅線模型
-        with open(LIVE_IMG_PATH, 'rb') as f_red:
-            resp_red = requests.post(REDLINE_API_URL, files={'file': f_red}, timeout=5)
-            if resp_red.status_code == 200:
-                r_data = resp_red.json()
-                red_line_detected = r_data.get("red_line_detected", False)
-                red_line_box = r_data.get("red_line_box", [])  # [x1, y1, x2, y2]
+        resp_red = requests.post(config.REDLINE_API_URL,
+                                 files={'image': ('live.jpg', img_bytes, 'image/jpeg')},
+                                 data={'model': 'yolov11m-seg'}, timeout=20)
+        if resp_red.status_code == 200:
+            r_data = resp_red.json()
+            # logging.info(f"Red line detected: {r_data}")
+            segments = r_data.get("segments", [])
 
+            for seg in segments:
+                if "red" in seg.get("class_name", "").lower():
+                    red_line_detected = True
+                    red_line_boxes.append(seg.get("bbox"))
+
+            red_line_count = len(red_line_boxes)
+            logging.info(f"Red line detected: {red_line_count}")
+
+        draw_violation_boxes(
+            config.LIVE_IMG_PATH,
+            config.LIVE_IMG_PATH,
+            car_boxes,
+            red_line_boxes
+        )
         # 核心判斷邏輯
-        if car_count > 0 and red_line_detected and red_line_box:
+        if car_count > 0 and red_line_detected:
             overlap_count = 0
-            for car in car_boxes:
-                # 取得該車的座標框
-                c_box = yolo_to_bbox(car['box'], img_w, img_h)
-                logger.info(c_box)
-                # 計算重疊
-                if check_intersection(c_box, red_line_box):
+            for c_box in car_boxes:
+                car_hit_line = False
+                for r_box in red_line_boxes:
+                    if check_intersection(c_box, r_box):
+                        car_hit_line = True
+                        break
+
+                if car_hit_line:
                     overlap_count += 1
 
             if overlap_count > 0:
@@ -165,7 +230,7 @@ def detect_parking(img_w, img_h):
     if is_violation:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         evidence_path = f"static/uploads/{timestamp}_evidence.jpg"
-        shutil.copy(LIVE_IMG_PATH, evidence_path)
+        shutil.copy(config.LIVE_IMG_PATH, evidence_path)
 
         with SessionLocal() as db:
             new_log = ParkingViolationLog(
@@ -181,25 +246,25 @@ def detect_parking(img_w, img_h):
             print(f"違規存檔: {evidence_path}")
 
     timestamp_now = datetime.now().isoformat()
-    latest_cache = {
+    state.latest_cache = {
         "id": log_id,
         "timestamp": timestamp_now,
         "is_violation": is_violation,
         "car_detected": (car_count > 0),
         "status": status_msg,
-        "image_url": f"/static/{LIVE_IMG_FILENAME}?t={datetime.now().timestamp()}"
+        "image_url": f"/static/{config.LIVE_IMG_FILENAME}?t={datetime.now().timestamp()}"
     }
     return is_violation, status_msg
 
 
 @app.post("/api/upload_form")
 async def upload_form(file: UploadFile = File(...)):
-    with open(LIVE_IMG_PATH, "wb") as buffer:
+    with open(config.LIVE_IMG_PATH, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
     img_w, img_h = 640, 480
     try:
-        with Image.open(LIVE_IMG_PATH) as img:
+        with Image.open(config.LIVE_IMG_PATH) as img:
             img_w, img_h = img.size
     except Exception as e:
         print(f"Warning: Cannot read image size, using default 640x480. Error: {e}")
@@ -210,22 +275,19 @@ async def upload_form(file: UploadFile = File(...)):
         "status": "processed",
         "violation_detected": is_violation,
         "message": status_msg,
-        "image_url": latest_cache["image_url"]
+        "image_url": state.latest_cache["image_url"]
     }
 
 
 @app.get("/api/system/status")
 def get_system_status():
-    tunnel_active = ssh_proc.poll() is None
+    tunnel_active = state.ssh_proc.poll() is None
     return {
         "status": "online",
         "tunnel_active": tunnel_active,
-        "tunnel_pid": ssh_proc.pid if tunnel_active else None,
+        "tunnel_pid": state.ssh_proc.pid if tunnel_active else None,
         "timestamp": datetime.now().isoformat()
     }
-
-
-active_transmissions = {}
 
 
 @app.post("/api/upload")
@@ -247,12 +309,12 @@ async def upload_chunk(
         return {"status": "error", "message": "Disconnected"}
 
     # 2. 初始化或取得緩衝區
-    if client_ip not in active_transmissions or offset == 0:
-        active_transmissions[client_ip] = bytearray(total)
+    if client_ip not in state.active_transmissions or offset == 0:
+        state.active_transmissions[client_ip] = bytearray(total)
         logger.info(f"New upload from {client_ip}, total size: {total}")
 
     # 3. 寫入片段
-    buffer = active_transmissions[client_ip]
+    buffer = state.active_transmissions[client_ip]
     end_index = offset + len(chunk_data)
 
     # 防止 offset 溢出導致 Crash
@@ -267,16 +329,16 @@ async def upload_chunk(
         try:
             # 使用解碼函式
             img = decode_rgb565(buffer, width, height)
-            img.save(LIVE_IMG_PATH)
+            img.save(config.LIVE_IMG_PATH)
 
             # 清理記憶體
-            del active_transmissions[client_ip]
+            del state.active_transmissions[client_ip]
             background_tasks.add_task(detect_parking, width, height)
             return {"status": "complete", "message": "Saved successfully", "command": "ring", "value": "true"}
         except Exception as e:
             logger.error(f"Decode failed: {e}")
-            if client_ip in active_transmissions:
-                del active_transmissions[client_ip]
+            if client_ip in state.active_transmissions:
+                del state.active_transmissions[client_ip]
             return {"status": "error", "message": str(e)}
 
     return {"status": "chunk_received", "progress": f"{int(end_index / total * 100)}%"}
@@ -302,8 +364,8 @@ def get_history(db: Session = Depends(get_db)):
 
 @app.get("/api/dashboard/latest")
 def get_latest_data(db: Session = Depends(get_db)):
-    if latest_cache["timestamp"] is not None:
-        return latest_cache
+    if state.latest_cache["timestamp"] is not None:
+        return state.latest_cache
 
     latest = db.query(ParkingViolationLog).order_by(ParkingViolationLog.id.desc()).first()
     if not latest:

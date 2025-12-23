@@ -13,7 +13,7 @@ services:
       - ./backend/static:/app/static
       - ./ssh_config:/ssh-host:ro
     environment:
-      - AI_SERVICE_URL=http://ai-service:5000
+      - AI_SERVICE_URL=http://localhost:9000
       - DATABASE_URL=postgresql://traffic_user:1234@db:5432/traffic_db
       - TZ=Asia/Taipei
     depends_on:
