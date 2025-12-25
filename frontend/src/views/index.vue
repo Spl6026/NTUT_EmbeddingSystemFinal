@@ -38,7 +38,7 @@ onUnmounted(() => clearInterval(timer));
   <div class="w-full font-sans">
     <header class="mb-10 text-center md:text-left pb-6">
       <h1 class="text-3xl font-extrabold tracking-tight text-[#102d47]">
-        紅線違規停車偵測系統
+        違規車輛偵測系統
       </h1>
       <p class="mt-2 text-[#668199] text-sm font-medium uppercase tracking-wide">
         Real-time Traffic Monitoring Dashboard
