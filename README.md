@@ -132,14 +132,11 @@ graph TD
     end
 
     %% --- 3. Remote Cloud ---
-    subgraph Remote_Cloud [Remote Cloud: GPU Server]
-        direction TB
-        YOLO(AI Service: YOLOv13 + Seg)
-    end
+    Remote_Unit("<b>Remote Cloud: GPU Server</b><br/>(AI Service: YOLOv13 + Seg)")
 
     %% --- External Data Flow ---
     HttpClient <== "Upload Image / Return Alert Command" ==> FastAPI
-    Tunnel <== Encrypted SSH Tunnel ==> YOLO
+    Tunnel <== Encrypted SSH Tunnel ==> Remote_Unit
     Browser(User Browser) == View Dashboard ==> VueServer
     Admin(Developer) ==> SSH_Service
 ```
