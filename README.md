@@ -101,15 +101,17 @@ graph TD
         Firmware[Firmware: CircuitPython]
         Interface(Interface: I2C / PIO)
         Cam(Camera: OV7670)
+        Buzzer(Actuator: Active Buzzer)
         
         %% Internal Connections
         Firmware -->|Capture Task| Interface
         Interface ===|Image Data| Cam
         Firmware -->|Chunked Upload| HttpClient[HTTP Client]
+        Firmware -->|Trigger Alert| Buzzer
     end
 
     %% --- 2. Local Server ---
-    subgraph Server_Host [Local Server]
+    subgraph Server_Host [Local Server: Edge Gateway]
         direction TB
         SSH_Service[System SSH Service]
         
@@ -136,7 +138,7 @@ graph TD
     end
 
     %% --- External Data Flow ---
-    HttpClient == Upload via Wi-Fi ==> FastAPI
+    HttpClient <== "Upload Image / Return Alert Command" ==> FastAPI
     Tunnel <== Encrypted SSH Tunnel ==> YOLO
     Browser(User Browser) == View Dashboard ==> VueServer
     Admin(Developer) ==> SSH_Service
