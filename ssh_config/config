@@ -1,10 +1,10 @@
 Host vcppx
-    # TODO: Use ssh-keygen -t ed25519 -f ssh_config/id_{YourName} -N "" -q to generate the key, 
+    # TODO: Use ssh-keygen -t ed25519 -f ssh_config/id_{YourName} to generate the key, 
     # then use type ssh_config\id_{YourName}.pub | ssh vcpuser@vcppx.ntut.edu.tw -p 31870 "cat >> ~/.ssh/authorized_keys" 
     # call calvin to type password
     HostName vcppx.ntut.edu.tw
     User vcpuser
     Port 31870
     # This points to the key we just generated (inside the container path)
-    IdentityFile /root/.ssh/id_ed25519 # <- replace with YourName
+    IdentityFile /root/.ssh/id_calvin # <- replace with YourName
     StrictHostKeyChecking no
