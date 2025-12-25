@@ -255,7 +255,7 @@ def detect_parking(img_w, img_h):
             if overlap_count > 0:
                 is_violation = True
                 v_str = ", ".join(violation_types)
-                status_msg = f"VIOLATION: {overlap_count} Car(s) in {v_str}!"
+                status_msg = f"VIOLATION: {overlap_count} Car{'s' if overlap_count > 1 else ''} in {v_str}!"
             else:
                 status_msg = "Safe: Car detected but not in restricted zones"
 
@@ -338,7 +338,7 @@ def get_system_status():
 @app.post("/api/upload")
 async def upload_chunk(
         request: Request,
-        background_tasks: BackgroundTasks,
+        # background_tasks: BackgroundTasks,
         offset: int = Query(...),
         total: int = Query(...),
         width: int = Query(320),
@@ -378,8 +378,9 @@ async def upload_chunk(
 
             # 清理記憶體
             del state.active_transmissions[client_ip]
-            background_tasks.add_task(detect_parking, width, height)
-            return {"status": "complete", "message": "Saved successfully", "command": "ring", "value": "true"}
+            is_violation, status_msg = detect_parking(width, height)
+            # background_tasks.add_task(detect_parking, width, height)
+            return {"status": "complete", "message": "Saved successfully", "command": "ring", "value": 'true' if is_violation else 'false'}
         except Exception as e:
             logger.error(f"Decode failed: {e}")
             if client_ip in state.active_transmissions:
