@@ -100,7 +100,7 @@ def check_intersection(boxA, boxB):
     return interWidth > 0 and interHeight > 0
 
 
-def draw_violation_boxes(input_path, output_path, car_boxes, red_line_boxes):
+def draw_violation_boxes(input_path, output_path, car_boxes, red_line_boxes, yellow_line_boxes, crosswalk_boxes):
     try:
         with Image.open(input_path) as img:
             img = img.convert("RGB")
@@ -110,6 +110,16 @@ def draw_violation_boxes(input_path, output_path, car_boxes, red_line_boxes):
                 if r_box and len(r_box) == 4:
                     box = [int(c) for c in r_box]
                     draw.rectangle(box, outline="red", width=5)
+
+            for y_box in yellow_line_boxes:
+                if y_box and len(y_box) == 4:
+                    box = [int(c) for c in y_box]
+                    draw.rectangle(box, outline="yellow", width=5)
+
+            for c_box in crosswalk_boxes:
+                if c_box and len(c_box) == 4:
+                    box = [int(c) for c in c_box]
+                    draw.rectangle(box, outline="orange", width=5)
 
             for car in car_boxes:
                 if len(car) == 4:
@@ -148,6 +158,10 @@ def detect_parking(img_w, img_h):
     car_boxes = []
     red_line_detected = False
     red_line_boxes = []
+    yellow_line_detected = False
+    yellow_line_boxes = []
+    crosswalk_detected = False
+    crosswalk_boxes = []
     is_violation = False
     status_msg = "Analyzing..."
     try:
@@ -175,49 +189,80 @@ def detect_parking(img_w, img_h):
         # 呼叫紅線模型
         resp_red = requests.post(config.REDLINE_API_URL,
                                  files={'image': ('live.jpg', img_bytes, 'image/jpeg')},
-                                 data={'model': 'yolov11m-seg'}, timeout=20)
+                                 data={'model': 'yolov11m-segv2'}, timeout=20)
         if resp_red.status_code == 200:
             r_data = resp_red.json()
             # logging.info(f"Red line detected: {r_data}")
             segments = r_data.get("segments", [])
 
             for seg in segments:
-                if "red" in seg.get("class_name", "").lower():
+                class_name = seg.get("class_name", "").lower()
+                if "red" in class_name:
                     red_line_detected = True
                     red_line_boxes.append(seg.get("bbox"))
+                elif "yellow" in class_name:
+                    yellow_line_detected = True
+                    yellow_line_boxes.append(seg.get("bbox"))
+                elif "crosswalk" in class_name:
+                    crosswalk_detected = True
+                    crosswalk_boxes.append(seg.get("bbox"))
 
-            red_line_count = len(red_line_boxes)
-            logging.info(f"Red line detected: {red_line_count}")
+            # red_line_count = len(red_line_boxes)
+            logging.info(f"Red: {len(red_line_boxes)}, Yellow: {len(yellow_line_boxes)}, Crosswalk: {len(crosswalk_boxes)}")
 
         draw_violation_boxes(
             config.LIVE_IMG_PATH,
             config.LIVE_IMG_PATH,
             car_boxes,
-            red_line_boxes
+            red_line_boxes,
+            yellow_line_boxes,
+            crosswalk_boxes
         )
         # 核心判斷邏輯
-        if car_count > 0 and red_line_detected:
+        any_restricted_zone = red_line_detected or yellow_line_detected or crosswalk_detected
+        
+        if car_count > 0 and any_restricted_zone:
             overlap_count = 0
+            violation_types = set()
+
             for c_box in car_boxes:
-                car_hit_line = False
+                car_hit = False
+                # Check Red Line
                 for r_box in red_line_boxes:
                     if check_intersection(c_box, r_box):
-                        car_hit_line = True
+                        car_hit = True
+                        violation_types.add("Red Line")
+                        break
+                
+                # Check Yellow Line if not already hit
+                # (You can separate logic if you want to track multiple violations per car, but simple is ok)
+                for y_box in yellow_line_boxes:
+                    if check_intersection(c_box, y_box):
+                        car_hit = True
+                        violation_types.add("Yellow Line")
+                        break
+                        
+                # Check Crosswalk
+                for cr_box in crosswalk_boxes:
+                    if check_intersection(c_box, cr_box):
+                        car_hit = True
+                        violation_types.add("Crosswalk")
                         break
 
-                if car_hit_line:
+                if car_hit:
                     overlap_count += 1
 
             if overlap_count > 0:
                 is_violation = True
-                status_msg = f"VIOLATION: {overlap_count} Car{'s' if overlap_count > 1 else ''} overlap with Red Line!"
+                v_str = ", ".join(violation_types)
+                status_msg = f"VIOLATION: {overlap_count} Car(s) in {v_str}!"
             else:
-                status_msg = "Safe: Car detected but not on Red Line"
+                status_msg = "Safe: Car detected but not in restricted zones"
 
         elif car_count > 0:
-            status_msg = "Safe: Car detected, No Red Line"
-        elif red_line_detected:
-            status_msg = "Safe: Red Line detected, No Cars"
+            status_msg = "Safe: Car detected, No Restricted Zones"
+        elif any_restricted_zone:
+            status_msg = "Safe: Restricted Zones detected, No Cars"
         else:
             status_msg = "Safe: Clear"
 
